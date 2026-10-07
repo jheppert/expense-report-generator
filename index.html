@@ -150,12 +150,12 @@
 <div class="wrap">
   <p class="eyebrow">Monthly Expense Report</p>
   <h1>Two invoices in, one report out.</h1>
-  <p class="lede">Drop this month's Adobe and Sketch invoices. The dates, amounts, and receipt images fill themselves in — you download a finished report.</p>
+  <p class="lede">Drop this month's invoices — Adobe, Sketch, or just one of them. The dates, amounts, and receipt images fill themselves in — you download a finished report.</p>
 
   <div id="drop" class="drop" tabindex="0" role="button" aria-label="Drop invoices or choose files">
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
-    <h2>Drop both invoices here</h2>
-    <p>or <span class="choose">choose files</span> — PDFs, in any order</p>
+    <h2>Drop your invoices here</h2>
+    <p>or <span class="choose">choose files</span> — PDFs, one or both, in any order</p>
     <input id="file" type="file" accept="application/pdf" multiple />
   </div>
 
@@ -184,7 +184,7 @@
 
   <div class="actions" id="actions" style="display:none">
     <button class="btn primary" id="generate" disabled>Generate report</button>
-    <span class="hint" id="actionHint">Add both invoices to continue</span>
+    <span class="hint" id="actionHint">Add at least one invoice to continue</span>
   </div>
 
   <div class="done" id="done" style="display:none">
@@ -209,14 +209,23 @@ const MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:
   january:0,february:1,march:2,april:3,june:5,july:6,august:7,september:8,october:9,november:10,december:11};
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
+// Per-vendor constants. `item` and `purpose` mirror the detail-table text baked
+// into the template, but the tool writes them per row: with a single invoice the
+// item shifts up into row 43, which the template labels for Adobe.
+const VENDORS = {
+  adobe:  { label:'Adobe',  keyword:'adobe',  item:'Adobe Photoshop', purpose:'Photo editing for design work' },
+  sketch: { label:'Sketch', keyword:'sketch', item:'Sketch',          purpose:'Interface design tool for work' },
+};
+const VENDOR_KEYS = ['adobe','sketch'];   // canonical order — detail rows and receipt columns follow it
+const DETAIL_ROWS = [43, 44];             // the detail-table rows the tool owns
+
 const state = { adobe:null, sketch:null, weekEnding:null, weekEditedByUser:false, lastBlob:null, lastName:null };
 
 // ---------- PDF parsing ----------
 function parseInvoice(text){
   const t = text.replace(/\s+/g,' ');
   const low = t.toLowerCase();
-  const vendor = low.includes('adobe') ? 'Adobe Photoshop'
-              : low.includes('sketch') ? 'Sketch' : null;
+  const vendor = VENDOR_KEYS.find(k => low.includes(VENDORS[k].keyword)) || null;
   let date=null, m;
   if((m=t.match(/Invoice Date\s*[:\-]?\s*(\d{1,2})-([A-Za-z]{3})-(\d{4})/i))) date=mkDate(+m[3],MONTHS[m[2].toLowerCase()],+m[1]);
   if(!date && (m=t.match(/Date of issue\s*[:\-]?\s*([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/i))) date=mkDate(+m[3],MONTHS[m[1].toLowerCase()],+m[2]);
@@ -269,19 +278,20 @@ async function handleFiles(fileList){
 }
 
 function routeSlot(slot){
-  if(slot.vendor==='Adobe Photoshop'){ state.adobe = slot; }
-  else if(slot.vendor==='Sketch'){ state.sketch = slot; }
-  else {
-    // unrecognized vendor — fill first open slot, flag for manual pick
-    if(!state.adobe){ slot.vendor='Adobe Photoshop'; slot.needsVendor=true; state.adobe=slot; }
-    else if(!state.sketch){ slot.vendor='Sketch'; slot.needsVendor=true; state.sketch=slot; }
-    else { showError("Both slots are full. Remove one before adding another invoice."); }
-  }
+  if(slot.vendor){ state[slot.vendor] = slot; return; }
+  // unrecognized vendor — fill first open slot, flag for manual pick
+  const open = VENDOR_KEYS.find(k => !state[k]);
+  if(!open){ showError("Both slots are full. Remove one before adding another invoice."); return; }
+  slot.vendor = open; slot.needsVendor = true; state[open] = slot;
 }
+
+// Present invoices in canonical order — 1 or 2 of them.
+function presentSlots(){ return VENDOR_KEYS.map(k => state[k]).filter(Boolean); }
+function readyToGenerate(){ const p = presentSlots(); return p.length > 0 && p.every(valid); }
 
 function refreshWeekDefault(){
   if(state.weekEditedByUser) return;
-  const dates = [state.adobe?.date, state.sketch?.date].filter(Boolean);
+  const dates = presentSlots().map(s=>s.date).filter(Boolean);
   if(!dates.length) return;
   const latest = new Date(Math.max(...dates.map(d=>d.getTime())));
   const wk = new Date(latest); wk.setDate(latest.getDate() + ((7 - latest.getDay()) % 7)); // Sunday ending Mon–Sun week
@@ -295,30 +305,28 @@ const $ = id => document.getElementById(id);
 function fmtDateInput(d){ if(!d) return ''; const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 function fmtLong(d){ return d ? `${MONTH_NAMES[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}` : '—'; }
 function money(n){ return '$'+(Number(n)||0).toFixed(2); }
+function totalAmount(){ return presentSlots().reduce((sum,s)=>sum+(s.amount||0), 0); }
 
-function slotMarkup(slot, which){
-  const key = which; // 'adobe' | 'sketch'
-  const label = which==='adobe' ? 'Adobe' : 'Sketch';
+function slotMarkup(slot, key){
+  const label = VENDORS[key].label;
   if(!slot){
     return `<div class="empty-hint">
         <span class="chip ghost">${label}</span>
-        <span class="h">Waiting for ${label} invoice</span>
-        <span class="s">Drop it above — order doesn't matter</span>
+        <span class="h">No ${label} invoice</span>
+        <span class="s">Optional — drop one above if you have it this month</span>
       </div>`;
   }
-  const chipClass = which==='adobe' ? 'adobe' : 'sketch';
   const needDate = !slot.date, needAmt = (slot.amount==null);
   const vendorSel = slot.needsVendor ? `
       <div class="field">
         <label>Vendor — couldn't tell, please confirm</label>
         <select class="vendor-select" data-vendor="${key}">
-          <option value="Adobe Photoshop" ${slot.vendor==='Adobe Photoshop'?'selected':''}>Adobe Photoshop</option>
-          <option value="Sketch" ${slot.vendor==='Sketch'?'selected':''}>Sketch</option>
+          ${VENDOR_KEYS.map(k=>`<option value="${k}" ${slot.vendor===k?'selected':''}>${VENDORS[k].item}</option>`).join('')}
         </select>
       </div>` : '';
   return `
     <div class="top">
-      <span class="chip ${chipClass}">${label}</span>
+      <span class="chip ${key}">${label}</span>
       <span class="fname" title="${slot.fileName}">${slot.fileName}</span>
       <button class="remove" data-remove="${key}" aria-label="Remove ${label} invoice">×</button>
     </div>
@@ -337,30 +345,29 @@ function slotMarkup(slot, which){
 }
 
 function render(){
-  const aEl=$('slot-adobe'), sEl=$('slot-sketch');
-  aEl.className = 'slot ' + (state.adobe?'filled':'empty');
-  sEl.className = 'slot ' + (state.sketch?'filled':'empty');
-  aEl.innerHTML = slotMarkup(state.adobe,'adobe');
-  sEl.innerHTML = slotMarkup(state.sketch,'sketch');
+  VENDOR_KEYS.forEach(k=>{
+    const el = $(`slot-${k}`);
+    el.className = 'slot ' + (state[k]?'filled':'empty');
+    el.innerHTML = slotMarkup(state[k], k);
+  });
 
-  const any = state.adobe || state.sketch;
-  $('ledger').style.display = any ? 'block' : 'none';
-  $('actions').style.display = any ? 'flex' : 'none';
+  const present = presentSlots();
+  $('ledger').style.display = present.length ? 'block' : 'none';
+  $('actions').style.display = present.length ? 'flex' : 'none';
 
   if(state.weekEnding) $('weekEnding').value = fmtDateInput(state.weekEnding);
   const friday = fridayFor(state.weekEnding);
   $('fridayText').textContent = fmtLong(friday);
 
-  const total = (state.adobe?.amount||0) + (state.sketch?.amount||0);
-  $('totalVal').textContent = money(total);
+  $('totalVal').textContent = money(totalAmount());
 
-  const ready = valid(state.adobe) && valid(state.sketch);
+  const ready = readyToGenerate();
   $('generate').disabled = !ready;
-  $('actionHint').textContent = ready ? 'Adobe and Sketch look good.'
-    : (!state.adobe && !state.sketch) ? 'Add both invoices to continue'
-    : !state.adobe ? 'Still need the Adobe invoice'
-    : !state.sketch ? 'Still need the Sketch invoice'
-    : 'Fill the highlighted date or amount to continue';
+  $('actionHint').textContent =
+      !present.length ? 'Add at least one invoice to continue'
+    : !ready ? 'Fill the highlighted date or amount to continue'
+    : present.length === VENDOR_KEYS.length ? 'Adobe and Sketch look good.'
+    : `${VENDORS[present[0].vendor].label} only — the report will have one line item.`;
 
   wireSlotInputs();
 }
@@ -378,19 +385,20 @@ function wireSlotInputs(){
   document.querySelectorAll('[data-amount]').forEach(el=>el.oninput=e=>{
     const s=state[e.target.dataset.amount]; if(!s) return;
     const v=parseFloat(e.target.value.replace(/[^0-9.]/g,''));
-    s.amount = isNaN(v)?null:v; 
+    s.amount = isNaN(v)?null:v;
     // light re-render of total only, avoid caret jump
-    const total=(state.adobe?.amount||0)+(state.sketch?.amount||0);
-    $('totalVal').textContent=money(total);
-    $('generate').disabled = !(valid(state.adobe)&&valid(state.sketch));
+    $('totalVal').textContent = money(totalAmount());
+    $('generate').disabled = !readyToGenerate();
   });
   document.querySelectorAll('[data-vendor]').forEach(el=>el.onchange=e=>{
-    const s=state[e.target.dataset.vendor]; if(!s) return;
-    s.vendor=e.target.value; s.needsVendor=false;
-    // re-route if vendor changed to the other product
-    const picked=e.target.value; const cur=e.target.dataset.vendor;
-    if(picked==='Sketch' && cur==='adobe'){ state.sketch=s; state.adobe=null; }
-    if(picked==='Adobe Photoshop' && cur==='sketch'){ state.adobe=s; state.sketch=null; }
+    const cur=e.target.dataset.vendor, picked=e.target.value;
+    const s=state[cur]; if(!s) return;
+    if(picked!==cur && state[picked]){
+      showError(`There's already a ${VENDORS[picked].label} invoice. Remove it first to move this one.`);
+      render(); return;                       // render() resets the select to the slot it's in
+    }
+    s.vendor=picked; s.needsVendor=false;
+    if(picked!==cur){ state[picked]=s; state[cur]=null; }   // re-route to the other slot
     render();
   });
   document.querySelectorAll('[data-remove]').forEach(el=>el.onclick=e=>{
@@ -415,31 +423,44 @@ async function generate(){
     const er = wb.getWorksheet('Expense Report');
     const rc = wb.getWorksheet('Receipts');
 
-    // detail table + combined
-    er.getCell('A43').value = state.adobe.date;   er.getCell('I43').value = state.adobe.amount;
-    er.getCell('A44').value = state.sketch.date;  er.getCell('I44').value = state.sketch.amount;
-    const combined = +((state.adobe.amount + state.sketch.amount).toFixed(2));
+    const items = presentSlots();   // 1 or 2, in canonical Adobe-then-Sketch order
+
+    // Detail table: items fill DETAIL_ROWS from the top, so a single invoice lands
+    // on row 43 instead of leaving a blank line item above it. Item name and purpose
+    // are written per row for the same reason — the template bakes Adobe's text into
+    // row 43, which is wrong once Sketch alone occupies it. Unused rows are cleared.
+    // Nothing on the sheet references these rows; F27 alone drives the totals.
+    DETAIL_ROWS.forEach((row, i) => {
+      const it = items[i], v = it && VENDORS[it.vendor];
+      er.getCell(`A${row}`).value = it ? it.date    : null;
+      er.getCell(`B${row}`).value = v  ? v.item     : null;
+      er.getCell(`F${row}`).value = v  ? v.purpose  : null;
+      er.getCell(`I${row}`).value = it ? it.amount  : null;
+    });
+
+    const combined = +(items.reduce((sum, it) => sum + it.amount, 0).toFixed(2));
     er.getCell('F27').value = combined;
 
     // weekly grid
     er.getCell('A10').value = state.weekEnding;
     er.getCell('F12').value = fridayFor(state.weekEnding);
 
-    // receipts — Adobe in the left column, Sketch in the right, side by side.
+    // receipts — first invoice in the left column, second in the right, side by side.
+    // A lone receipt therefore sits on the left rather than stranded on the right.
     // Integer start columns are used on purpose: ExcelJS's fractional-column math
     // disagrees with Excel's real column widths, so a fractional offset would drift
     // and overlap. Col 7 clears the 408px-wide left image with a clean gap.
     const DISPLAY_W = 408;                 // ~4.25in, matching the template
-    const START_COL = { adobe: 0, sketch: 7 };
-    for(const [key, slot] of [['adobe', state.adobe], ['sketch', state.sketch]]){
+    const START_COL = [0, 7];
+    items.forEach((slot, i) => {
       let row = 1;                         // each column starts at the top
       for(const pg of slot.pages){         // multi-page invoices stack within their own column
         const H = Math.round(DISPLAY_W * pg.h / pg.w);
         const id = wb.addImage({ base64: pg.b64, extension:'png' });
-        rc.addImage(id, { tl:{col:START_COL[key], row}, ext:{width:DISPLAY_W, height:H}, editAs:'oneCell' });
+        rc.addImage(id, { tl:{col:START_COL[i], row}, ext:{width:DISPLAY_W, height:H}, editAs:'oneCell' });
         row += Math.ceil(H/20) + 2;        // default row ~20px + small gap
       }
-    }
+    });
 
     // force Excel to recalc totals on open
     wb.calcProperties = wb.calcProperties || {};
@@ -483,7 +504,7 @@ window.addEventListener('drop',e=>{ e.preventDefault(); if(e.target.closest('#dr
 
 $('generate').onclick=generate;
 $('downloadAgain').onclick=()=>{ if(state.lastBlob) triggerDownload(state.lastBlob, state.lastName); };
-$('startOver').onclick=()=>{ state.adobe=null; state.sketch=null; state.weekEnding=null; state.weekEditedByUser=false; state.lastBlob=null; $('done').style.display='none'; render(); window.scrollTo({top:0,behavior:'smooth'}); };
+$('startOver').onclick=()=>{ VENDOR_KEYS.forEach(k=>state[k]=null); state.weekEnding=null; state.weekEditedByUser=false; state.lastBlob=null; $('done').style.display='none'; render(); window.scrollTo({top:0,behavior:'smooth'}); };
 
 function showError(msg){ const e=$('err'); e.textContent=msg; e.classList.add('show'); }
 function hideError(){ $('err').classList.remove('show'); }
