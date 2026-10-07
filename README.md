@@ -1,6 +1,6 @@
 # Expense Report Builder
 
-A single-file, browser-based tool that turns your monthly SaaS invoices (Adobe Photoshop and/or Sketch) into a finished consultant expense report — no manual data entry.
+A small, build-step-free browser tool that turns your monthly SaaS invoices (Adobe Photoshop and/or Sketch) into a finished consultant expense report — no manual data entry.
 
 **→ Use it: <https://jheppert.github.io/expense-report-generator/>**
 
@@ -16,6 +16,17 @@ Drop the PDFs in — one or both — and it reads the purchase dates and amounts
 - Names the file for the month automatically
 
 Everything is editable before you generate — detected values show in two slots (either one is optional), and anything it couldn't read is highlighted for you to fill in.
+
+## Project files
+
+No build step — the browser loads these as-is.
+
+| File | What's in it |
+|------|--------------|
+| `index.html` | Markup, the CDN `<script>`/`<link>` tags, and a small inline module that loads pdf.js |
+| `styles.css` | All styling — the ledger/receipt theme |
+| `app.js` | Invoice parsing, the editable form, and `.xlsx` generation |
+| `template.js` | The report template as a base64 `.xlsx` string — one large constant, kept apart so `app.js` stays readable |
 
 ## Use it
 
@@ -45,5 +56,6 @@ CDN libraries and fonts load over HTTPS, so there are no mixed-content issues on
 
 ## Notes
 
+- pdf.js 4.x ships as an ES module only, so `index.html` imports it in a small inline `<script type="module">` and hands it to `app.js` via `window.pdfjsLib`. Keeping that import **inline** — rather than making `app.js` itself a module — is what lets the page still run when opened straight from disk: a `file://` page has an opaque origin, and browsers CORS-block *external* module scripts there.
 - Two full-width receipts sit side by side (~8.5in total), so the Receipts sheet is sized for on-screen viewing. If you print it, the pair fills the page width.
 - Built for the recurring Adobe + Sketch pair, with either one optional. Extending it to other vendors is a small change — see `context.md`.

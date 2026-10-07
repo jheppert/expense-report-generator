@@ -4,9 +4,20 @@ Working notes for picking this project back up. Written July 2026.
 
 ## What this is
 
-A single self-contained `index.html` (~256KB) that automates Jeff's monthly consultant expense report for Apple (via Red Oak Technologies). Two SaaS invoices used to come in every month — **Adobe Photoshop** and **Sketch** — and the report is otherwise identical month to month. Either one is now optional — Adobe was paused as of October 2026 and may come back — so the tool accepts one or both PDFs, extracts the date + amount from each, fills an embedded `.xlsx` template, embeds the receipt images, and downloads the finished file.
+A small browser tool — `index.html` + `styles.css` + `app.js` + `template.js`, no build step — that automates Jeff's monthly consultant expense report for Apple (via Red Oak Technologies). Two SaaS invoices used to come in every month — **Adobe Photoshop** and **Sketch** — and the report is otherwise identical month to month. Either one is now optional — Adobe was paused as of October 2026 and may come back — so the tool accepts one or both PDFs, extracts the date + amount from each, fills an embedded `.xlsx` template, embeds the receipt images, and downloads the finished file.
 
-Everything runs in the browser. No backend, no build step. The report template is embedded in the HTML as a base64 string (`TEMPLATE_B64`).
+Everything runs in the browser. No backend, no build step. The report template is embedded as a base64 string (`TEMPLATE_B64`, in `template.js`).
+
+## File layout
+
+| File | What's in it |
+|------|--------------|
+| `index.html` | Markup, CDN tags, and the inline pdf.js module (see below) |
+| `styles.css` | The ledger/receipt theme |
+| `app.js` | `parseInvoice()`, the form/state, and `generate()` — everything behavioral |
+| `template.js` | `TEMPLATE_B64`, ~231KB of base64 on one line |
+
+**Why the pdf.js import is inline in `index.html` and not in `app.js`:** pdf.js 4.x is ESM-only (verified — there is no UMD build on the CDN for `4.0.379`), and a page opened via `file://` has an opaque origin, so browsers CORS-block *external* module scripts. An inline module importing over https is fine. So `index.html` imports pdf.js inline, sets `window.pdfjsLib`, and fires a `pdfjs-ready` event; `app.js` is a plain classic script (`'use strict'`) that waits for it in `pdfjs()`. Everything else — `styles.css`, `app.js`, `template.js` — loads as a classic resource, which `file://` permits. **Don't convert `app.js` to a module** without accepting that local-from-disk use breaks and needs a static server.
 
 ## Where it lives
 
@@ -98,8 +109,8 @@ Grounded in a ledger/receipt theme (the subject's own world): warm paper backgro
 
 ## Verifying changes without a browser
 
-The generate path can be exercised headlessly, which is worth doing for anything touching cell writes or receipt anchoring. The approach that worked: extract the page's module `<script>` from `index.html`, strip the pdf.js `import`, run it via `new Function` with small stubs for `document`/`window`/`URL` and `globalThis.ExcelJS = require('exceljs')`, and capture the bytes by stubbing `Blob` to keep `parts[0]`. Append a line exposing the internals (`globalThis.__T = { state, generate, ... }`) so the test can drive them. That runs the real code rather than a copy. Then unzip the output and assert on the XML directly: `fullCalcOnLoad` present in `xl/workbook.xml`, receipt anchors with `colOff=0` in the Receipts drawing, the 40 formula cells unchanged against the template (compare maps — shared-formula followers have no `<f>` text, so don't filter them out), and rows 43/44 style ids unchanged.
+The generate path can be exercised headlessly, which is worth doing for anything touching cell writes or receipt anchoring. The approach that worked: concatenate `template.js` + `app.js`, run them via `new Function` with small stubs for `document`/`window`/`URL` and `globalThis.ExcelJS = require('exceljs')`, and capture the bytes by stubbing `Blob` to keep `parts[0]`. Append a line exposing the internals (`globalThis.__T = { state, generate, ... }`) so the test can drive them — this works because `app.js` is a classic script with top-level declarations. That runs the real code rather than a copy. pdf.js is never touched, since `generate()` only consumes already-rendered page images. Then unzip the output and assert on the XML directly: `fullCalcOnLoad` present in `xl/workbook.xml`, receipt anchors with `colOff=0` in the Receipts drawing, the 40 formula cells unchanged against the template (compare maps — shared-formula followers have no `<f>` text, so don't filter them out), and rows 43/44 style ids unchanged.
 
 ## Resuming with Claude
 
-If you hand this back to Claude later, the fastest path is: share `index.html` plus this file. The tool is self-contained — the template is embedded, so no other files are needed to regenerate or modify it. The trickiest areas to touch are the receipt anchoring (integer-column rule above) and the `fullCalcOnLoad` mutation; both are easy to break in ways that only show up when the file is opened in real Excel.
+If you hand this back to Claude later, the fastest path is: share this file plus `app.js` and `index.html` (`template.js` is just the base64 blob — only needed if the template itself is changing). The tool has no dependencies beyond the three CDN libraries. The trickiest areas to touch are the receipt anchoring (integer-column rule above) and the `fullCalcOnLoad` mutation; both are easy to break in ways that only show up when the file is opened in real Excel.
